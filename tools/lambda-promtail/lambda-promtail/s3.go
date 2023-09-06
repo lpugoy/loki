@@ -19,7 +19,9 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
 type parserConfig struct {
@@ -114,7 +116,29 @@ func getS3Client(ctx context.Context, region string) (*s3.Client, error) {
 		if err != nil {
 			return nil, err
 		}
-		s3Client = s3.NewFromConfig(cfg)
+		s3Cfg := cfg
+		if s3AssumeRole != "" {
+			stsClient := sts.NewFromConfig(cfg)
+			tempCreds, err := stsClient.AssumeRole(ctx, &sts.AssumeRoleInput{
+				RoleArn:         aws.String(s3AssumeRole),
+				RoleSessionName: aws.String("lambda-promtail"),
+			})
+			if err != nil {
+				return nil, err
+			}
+			s3Cfg, err = config.LoadDefaultConfig(
+				ctx,
+				config.WithRegion(region),
+				config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+					*tempCreds.Credentials.AccessKeyId,
+					*tempCreds.Credentials.SecretAccessKey,
+					*tempCreds.Credentials.SessionToken,
+				)))
+			if err != nil {
+				return nil, err
+			}
+		}
+		s3Client = s3.NewFromConfig(s3Cfg)
 		s3Clients[region] = s3Client
 	}
 	return s3Client, nil
